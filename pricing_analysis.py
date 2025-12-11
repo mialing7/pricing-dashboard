@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 # --- 页面全局设置 ---
-st.set_page_config(page_title="全球定价决策看板 v11.0", layout="wide", page_icon="📊")
+st.set_page_config(page_title="全球定价决策看板", layout="wide", page_icon="📊")
 
 # ==========================================
 # 1. 侧边栏：上传与筛选
@@ -138,45 +138,78 @@ if uploaded_file:
     total_vol = df['销量(吨)'].sum()
     avg_price_weighted = total_rev / total_vol if total_vol > 0 else 0
 
-    # ==========================================
-    # 3. 三大独立统计面板 (核心更新部分)
+   # ==========================================
+    # 3. 三大独立统计面板 (布局优化版：防止数值挤压)
     # ==========================================
     st.subheader("1. 核心统计概览 (Descriptive Statistics)")
     st.info("从 **价格、销量、业绩** 三个维度透视业务健康度。")
 
-    # --- 面板 1: 价格统计 ---
+    # [安全计算] 防止筛选后数据为空导致报错
+    if len(df) == 0:
+        st.warning("⚠️ 当前筛选后无数据，请调整左侧筛选条件。")
+        st.stop()
+
+    # 重新计算需要的统计值
+    total_rev = df['总销售额'].sum()
+    total_vol = df['销量(吨)'].sum()
+    avg_price_weighted = total_rev / total_vol if total_vol > 0 else 0
+    
+    # 样式优化：每个板块内部不再一行塞5个，而是分两行显示
+    
+    # --- 面板 1: 价格统计 (Price) ---
     with st.container():
-        st.markdown("### 🏷️ 1. 价格统计面板 (Price Metrics)")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("加权平均单价", f"¥{avg_price_weighted:,.0f}")
-        col2.metric("中位数单价 (基准)", f"¥{df['单价'].median():,.0f}")
-        col3.metric("🔴 红海门槛 (Q1)", f"< ¥{p25:,.0f}", delta="Low", delta_color="inverse")
-        col4.metric("🟢 蓝海门槛 (Q3)", f"> ¥{p75:,.0f}", delta="High")
-        col5.metric("单笔最高价", f"¥{df['单价'].max():,.0f}")
+        st.markdown("### 🏷️ 1. 价格统计 (Price Metrics)")
+        # 第一行：看主流
+        c1, c2, c3 = st.columns(3)
+        c1.metric("加权平均单价", f"¥{avg_price_weighted:,.0f}")
+        c2.metric("中位数单价", f"¥{df['单价'].median():,.0f}")
+        c3.metric("单笔最高价", f"¥{df['单价'].max():,.0f}")
+        
+        # 第二行：看分层
+        c4, c5, c6 = st.columns(3)
+        c4.metric("🔴 红海门槛 (Q1)", f"< ¥{p25:,.0f}", delta="Low", delta_color="inverse")
+        c5.metric("🟢 蓝海门槛 (Q3)", f"> ¥{p75:,.0f}", delta="High")
+        c6.write("") # 占位符，保持排版整齐
 
     st.divider()
 
-    # --- 面板 2: 销量统计 ---
+    # --- 面板 2: 销量统计 (Volume) ---
     with st.container():
-        st.markdown("### 📦 2. 销量统计面板 (Volume Metrics)")
-        v1, v2, v3, v4, v5 = st.columns(5)
+        st.markdown("### 📦 2. 销量统计 (Volume Metrics)")
+        # 第一行：宏观总量
+        v1, v2, v3 = st.columns(3)
         v1.metric("总出口销量", f"{total_vol:,.1f} 吨")
         v2.metric("单笔平均销量", f"{df['销量(吨)'].mean():,.2f} 吨")
         v3.metric("单笔最大销量", f"{df['销量(吨)'].max():,.1f} 吨")
-        v4.metric("国家平均总销量", f"{country_stats['销量(吨)'].mean():,.1f} 吨")
-        v5.metric("国家最大总销量", f"{country_stats['销量(吨)'].max():,.1f} 吨")
+        
+        # 第二行：国家维度
+        v4, v5, v6 = st.columns(3)
+        mean_country_vol = country_stats['销量(吨)'].mean() if not country_stats.empty else 0
+        max_country_vol = country_stats['销量(吨)'].max() if not country_stats.empty else 0
+        
+        v4.metric("国家平均总销量", f"{mean_country_vol:,.1f} 吨")
+        v5.metric("国家最大总销量", f"{max_country_vol:,.1f} 吨")
+        v6.write("") 
 
     st.divider()
 
-    # --- 面板 3: 业绩/销售额统计 ---
+    # --- 面板 3: 业绩/销售额统计 (Revenue) ---
     with st.container():
-        st.markdown("### 💎 3. 业绩统计面板 (Revenue Metrics)")
-        r1, r2, r3, r4, r5 = st.columns(5)
+        st.markdown("### 💎 3. 业绩统计 (Revenue Metrics)")
+        # 第一行：总账
+        r1, r2, r3 = st.columns(3)
         r1.metric("总销售额", f"¥{total_rev/10000:,.1f} 万")
         r2.metric("平均客单价 (单笔)", f"¥{df['总销售额'].mean()/10000:,.2f} 万")
         r3.metric("最高客单价 (单笔)", f"¥{df['总销售额'].max()/10000:,.1f} 万")
-        r4.metric("国家平均贡献额", f"¥{country_stats['总销售额'].mean()/10000:,.1f} 万")
-        r5.metric("国家最高贡献额", f"¥{country_stats['总销售额'].max()/10000:,.1f} 万")
+        
+        # 第二行：国家贡献
+        r4, r5, r6 = st.columns(3)
+        mean_country_rev = country_stats['总销售额'].mean() if not country_stats.empty else 0
+        max_country_rev = country_stats['总销售额'].max() if not country_stats.empty else 0
+        
+        r4.metric("国家平均贡献额", f"¥{mean_country_rev/10000:,.1f} 万")
+        r5.metric("国家最高贡献额", f"¥{max_country_rev/10000:,.1f} 万")
+        r6.write("")
 
     st.divider()
 
