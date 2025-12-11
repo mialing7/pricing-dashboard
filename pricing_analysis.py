@@ -9,7 +9,7 @@ st.set_page_config(page_title="不锈钢法兰定价分析看板 v3.0", layout="
 # --- 1. 数据加载与预处理 ---
 @st.cache_data
 def load_data():
-    file_path = '不锈钢数据导出.xlsx - 不锈钢数据导出.csv'
+    file_path = '不锈钢数据导出.xlsx'
     
     # 尝试多种方式读取，确保兼容性
     try:
