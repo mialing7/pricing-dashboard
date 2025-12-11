@@ -1,210 +1,224 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import io
 
-# --- 页面基本设置 ---
-st.set_page_config(page_title="通用出口定价分析看板 (完美版)", layout="wide", page_icon="🚢")
+# --- 页面设置 ---
+st.set_page_config(page_title="出口定价全景分析看板 v7.0", layout="wide", page_icon="🚢")
 
-# --- 侧边栏：上传数据 ---
-st.sidebar.title("📂 数据导入")
-st.sidebar.info("支持 CSV 或 Excel 文件。自动识别不锈钢/碳钢格式。")
+# --- 侧边栏：数据上传与筛选 ---
+st.sidebar.title("📂 数据与筛选")
 
-uploaded_file = st.sidebar.file_uploader("请上传您的出口数据文件", type=['csv', 'xlsx', 'xls'])
+# 1. 上传
+uploaded_file = st.sidebar.file_uploader("1. 上传数据文件 (CSV/Excel)", type=['csv', 'xlsx', 'xls'])
 
-# --- 核心函数：智能数据清洗 ---
-def load_and_clean_data(file):
-    # 1. 尝试读取文件
+# --- 数据处理函数 ---
+def load_and_process(file):
     try:
         if file.name.endswith('.csv'):
             try:
                 df = pd.read_csv(file)
-            except UnicodeDecodeError:
+            except:
                 file.seek(0)
                 df = pd.read_csv(file, encoding='gbk')
         else:
             df = pd.read_excel(file)
     except Exception as e:
-        return None, f"文件读取失败: {e}"
+        return None, f"读取错误: {e}"
 
-    # 2. 列名标准化
+    # 清洗列名
     df.columns = df.columns.str.strip()
     
-    # 3. 智能寻找“单价”列
-    price_col_candidates = ['单价/每吨', '价格/每吨', '单价', '价格', 'Price', 'Unit Price']
-    found_price_col = None
+    # 智能映射列名
+    col_map = {}
     for col in df.columns:
-        if col in price_col_candidates:
-            found_price_col = col
-            break
-    if found_price_col:
-        df.rename(columns={found_price_col: '单价/每吨'}, inplace=True)
-    else:
-        return None, f"❌ 找不到价格列！请确保文件里包含: {price_col_candidates}"
-
-    # 4. 智能寻找“数量”列
-    qty_col_candidates = ['第二数量', '数量', 'Quantity', 'Qty']
-    found_qty_col = None
-    for col in df.columns:
-        if col in qty_col_candidates:
-            found_qty_col = col
-            break
-    if found_qty_col:
-        df.rename(columns={found_qty_col: '第二数量'}, inplace=True)
-    else:
-        return None, f"❌ 找不到数量列！请确保文件里包含: {qty_col_candidates}"
-
-    # 5. 转换数值类型
-    numeric_cols = ['单价/每吨', '第二数量', '人民币']
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+        if col in ['单价/每吨', '价格/每吨', '单价', 'Price']:
+            col_map[col] = '单价'
+        elif col in ['第二数量', '数量', 'Qty', 'Quantity']:
+            col_map[col] = '销量(吨)'
+        elif col in ['贸易伙伴名称', '国家', 'Country']:
+            col_map[col] = '国家'
+            
+    df.rename(columns=col_map, inplace=True)
     
-    # 6. 基础过滤
-    df = df.dropna(subset=['单价/每吨', '第二数量'])
-    df = df[df['单价/每吨'] > 0]
+    # 检查必要列
+    required = ['单价', '销量(吨)', '国家']
+    if not all(c in df.columns for c in required):
+        return None, f"缺少必要列，请确保文件包含: {required}"
+
+    # 转换数值
+    for c in ['单价', '销量(吨)']:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
+    
+    df = df.dropna(subset=['单价', '销量(吨)'])
+    df = df[df['单价'] > 0]
+    
+    # 计算总销售额
+    df['总销售额'] = df['单价'] * df['销量(吨)']
     
     return df, None
 
-# --- 主逻辑 ---
-if uploaded_file is not None:
-    df_raw, error_msg = load_and_clean_data(uploaded_file)
-    if error_msg:
-        st.error(error_msg)
+# --- 主界面逻辑 ---
+if uploaded_file:
+    df, err = load_and_process(uploaded_file)
+    if err:
+        st.error(err)
         st.stop()
         
-    file_label = uploaded_file.name.split('.')[0]
-    st.title(f"📊 {file_label} - 深度定价分析")
-
-    # --- 侧边栏配置 ---
+    # --- 侧边栏：高级筛选 ---
     st.sidebar.divider()
-    st.sidebar.subheader("⚙️ 分析设置")
+    st.sidebar.subheader("2. 分析过滤器")
     
-    # 1. 极值过滤
-    use_iqr = st.sidebar.checkbox("剔除价格异常值 (IQR)", value=True)
+    # 筛选1: 极值处理
+    use_iqr = st.sidebar.checkbox("剔除价格极值 (IQR算法)", value=True)
     if use_iqr:
-        Q1 = df_raw['单价/每吨'].quantile(0.25)
-        Q3 = df_raw['单价/每吨'].quantile(0.75)
+        Q1 = df['单价'].quantile(0.25)
+        Q3 = df['单价'].quantile(0.75)
         IQR = Q3 - Q1
-        lower = Q1 - 1.5 * IQR
-        upper = Q3 + 1.5 * IQR
-        df = df_raw[(df_raw['单价/每吨'] >= lower) & (df_raw['单价/每吨'] <= upper)]
-        st.sidebar.caption(f"保留价格区间: {max(0, lower):.0f} - {upper:.0f}")
-    else:
-        df = df_raw.copy()
-
-    # 2. 贸易伙伴筛选
-    all_countries = sorted(df['贸易伙伴名称'].astype(str).unique())
-    selected_countries = st.sidebar.multiselect("筛选贸易伙伴", all_countries)
-    if selected_countries:
-        df = df[df['贸易伙伴名称'].isin(selected_countries)]
-
-    # --- 核心指标 ---
-    col1, col2, col3, col4 = st.columns(4)
-    avg_price = (df['人民币'].sum() / df['第二数量'].sum()) if '人民币' in df.columns else df['单价/每吨'].mean()
-    median_price = df['单价/每吨'].median()
-    low_threshold = df['单价/每吨'].quantile(0.25)
+        df = df[(df['单价'] >= Q1 - 1.5*IQR) & (df['单价'] <= Q3 + 1.5*IQR)]
+        
+    # 筛选2: 按客户总金额筛选
+    country_total_sales = df.groupby('国家')['总销售额'].sum()
+    min_sales_input = st.sidebar.number_input(
+        "剔除小客户: 仅分析总销售额大于...", 
+        min_value=0, 
+        value=10000, 
+        step=5000,
+        help="剔除由于样品单或极小订单造成的干扰。"
+    )
     
-    col1.metric("加权平均价", f"¥{avg_price:,.0f}")
-    col2.metric("中位数价格", f"¥{median_price:,.0f}")
-    col3.metric("低端警戒线 (Bottom 25%)", f"¥{low_threshold:,.0f}", delta_color="inverse")
-    col4.metric("分析样本量", f"{len(df)} 行")
+    valid_countries = country_total_sales[country_total_sales >= min_sales_input].index
+    df = df[df['国家'].isin(valid_countries)]
+    
+    # 筛选3: 指定国家
+    selected_countries = st.sidebar.multiselect("特定国家筛选", options=sorted(df['国家'].unique()))
+    if selected_countries:
+        df = df[df['国家'].isin(selected_countries)]
+
+    # --- 顶部：业务解释 ---
+    st.title(f"📊 {uploaded_file.name.split('.')[0]} - 深度定价分析报告")
+    
+    with st.expander("📖 **分析指南：如何使用本看板？(点击展开)**", expanded=False):
+        st.markdown("""
+        * **全球定价矩阵 (气泡图)：** * **横轴**=价格，**纵轴**=销量。
+            * **气泡大小**=总销售额。寻找**右上角**（又贵又多）的“现金牛”国家。
+        * **市场分层定义：**
+            * 🔴 **红海 (Low End)：** 价格最低的 25% 订单，竞争最激烈。
+            * 🟢 **蓝海 (High End)：** 价格最高的 25% 订单，高溢价区域。
+            * 🟡 **主流 (Mainstream)：** 中间 50% 的大众市场。
+        * **箱线图 (Box Plot)：** 展示一个国家的报价波动范围。箱子越长，说明价格弹性越大（既买便宜也买贵）。
+        """)
+
+    # --- 关键指标卡片 ---
+    total_vol = df['销量(吨)'].sum()
+    total_rev = df['总销售额'].sum()
+    avg_price = total_rev / total_vol if total_vol > 0 else 0
+    q1_price = df['单价'].quantile(0.25)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("加权平均单价", f"¥{avg_price:,.0f}")
+    col2.metric("总销售额 (筛选后)", f"¥{total_rev/10000:,.1f} 万")
+    col3.metric("红海警戒线 (<25%)", f"¥{q1_price:,.0f}", delta="低于此价需警惕", delta_color="inverse")
+    col4.metric("有效样本量", f"{len(df)} 笔")
     
     st.divider()
 
-    # --- 聚合数据与分类 ---
-    country_stats = df.groupby('贸易伙伴名称').agg({
-        '单价/每吨': 'median',
-        '第二数量': 'sum',
-        '人民币': 'sum' if '人民币' in df.columns else 'count',
-        '贸易伙伴名称': 'count' # 订单数
-    }).rename(columns={'贸易伙伴名称':'订单数'}).reset_index()
+    # --- 数据聚合 ---
+    country_stats = df.groupby('国家').agg({
+        '单价': 'median',
+        '销量(吨)': 'sum',
+        '总销售额': 'sum',
+        '国家': 'count'
+    }).rename(columns={'国家':'订单数'})
     
-    # 市场分类逻辑
-    def classify(price):
-        if price >= df['单价/每吨'].quantile(0.75): return '🟢 高端/溢价'
-        elif price <= df['单价/每吨'].quantile(0.25): return '🔴 低端/红海'
-        else: return '🟡 中端/主流'
-    
-    country_stats['类型'] = country_stats['单价/每吨'].apply(classify)
-    country_stats = country_stats[country_stats['第二数量'] > 0] # 过滤0销量
+    country_stats.index.name = '国家'
+    country_stats = country_stats.reset_index()
 
-    # --- 1. 市场结构与份额 (饼图 + 散点图) ---
-    st.subheader("1. 市场结构全景")
-    c1, c2 = st.columns([1, 2])
-    
+    # 划分市场类型
+    p25 = df['单价'].quantile(0.25)
+    p75 = df['单价'].quantile(0.75)
+    def get_type(p):
+        if p >= p75: return '🟢 高价蓝海'
+        elif p <= p25: return '🔴 低价红海'
+        else: return '🟡 主流市场'
+    country_stats['市场类型'] = country_stats['单价'].apply(get_type)
+
+    # --- 1. 定价矩阵 ---
+    st.subheader("1. 全球定价矩阵 (Price-Volume Matrix)")
+    fig_matrix = px.scatter(
+        country_stats, x='单价', y='销量(吨)', size='总销售额', 
+        color='市场类型',
+        color_discrete_map={'🔴 低价红海':'#EF553B', '🟢 高价蓝海':'#00CC96', '🟡 主流市场':'#636EFA'},
+        hover_name='国家', log_y=True, text='国家'
+    )
+    fig_matrix.add_vline(x=df['单价'].median(), line_dash="dash", line_color="gray", annotation_text="中位价")
+    fig_matrix.add_hline(y=df['销量(吨)'].median(), line_dash="dash", line_color="gray", annotation_text="中位量")
+    fig_matrix.update_traces(textposition='top center')
+    st.plotly_chart(fig_matrix, use_container_width=True)
+
+    # --- 2. 业务规模统计面板 ---
+    st.subheader("2. 业务规模分布 (Statistics)")
+    st.info("📊 辅助判断：我们的业务结构是靠“大客户”还是“散单”？")
+
+    c1, c2 = st.columns(2)
     with c1:
-        # 补回饼图！
-        market_share = country_stats.groupby('类型')['第二数量'].sum().reset_index()
-        fig_pie = px.pie(market_share, values='第二数量', names='类型', title='各级市场销量占比',
-                         color='类型',
-                         color_discrete_map={'🔴 低端/红海':'#EF553B', '🟢 高端/溢价':'#00CC96', '🟡 中端/主流':'#636EFA'})
-        st.plotly_chart(fig_pie, use_container_width=True)
-        
+        st.markdown("**📦 销量统计 (Volume)**")
+        v1, v2 = st.columns(2)
+        v1.metric("单笔最大销量", f"{df['销量(吨)'].max():,.1f} 吨")
+        v2.metric("国家最大总销量", f"{country_stats['销量(吨)'].max():,.1f} 吨")
     with c2:
-        # 四象限图
-        fig_scatter = px.scatter(
-            country_stats, 
-            x='单价/每吨', y='第二数量', 
-            size='人民币' if '人民币' in df.columns else '第二数量',
-            color='类型',
-            color_discrete_map={'🔴 低端/红海':'#EF553B', '🟢 高端/溢价':'#00CC96', '🟡 中端/主流':'#636EFA'},
-            hover_name='贸易伙伴名称', log_y=True,
-            title=f"全球定价矩阵 (价格 vs 销量)"
-        )
-        fig_scatter.add_vline(x=median_price, line_dash="dash", line_color="gray", annotation_text="中位数")
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        st.markdown("**💰 金额统计 (Revenue)**")
+        m1, m2 = st.columns(2)
+        m1.metric("单笔最大金额", f"¥{df['总销售额'].max()/10000:,.1f} 万")
+        m2.metric("国家最大总金额", f"¥{country_stats['总销售额'].max()/10000:,.1f} 万")
 
-    # --- 2. 价格排行 (Top & Bottom) ---
-    st.subheader("2. 机会与风险 (Top 10)")
+    st.divider()
+
+    # --- 3. 排行榜 ---
+    st.subheader("3. 机会与风险 (Rankings)")
     col_l, col_r = st.columns(2)
-    
     with col_l:
-        st.caption("🏆 高溢价国家 (价格高，有销量)")
-        top_df = country_stats.sort_values('单价/每吨', ascending=False).head(10)
-        fig_top = px.bar(top_df, y='贸易伙伴名称', x='单价/每吨', orientation='h', color='单价/每吨', color_continuous_scale='Reds')
+        st.markdown("#### 🏆 高溢价蓝海 (Top 10)")
+        top_df = country_stats.sort_values('单价', ascending=False).head(10)
+        fig_top = px.bar(top_df, y='国家', x='单价', orientation='h', color='单价', color_continuous_scale='Reds')
         fig_top.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_top, use_container_width=True)
-        
     with col_r:
-        st.caption("📉 低价红海国家 (价格卷，竞争大)")
-        bot_df = country_stats.sort_values('单价/每吨', ascending=True).head(10)
-        fig_bot = px.bar(bot_df, y='贸易伙伴名称', x='单价/每吨', orientation='h', color='单价/每吨', color_continuous_scale='Teal')
-        fig_bot.update_layout(yaxis={'categoryorder':'total descending'})
+        st.markdown("#### 📉 低价红海 (Top 10)")
+        bot_df = country_stats.sort_values('单价', ascending=True).head(10)
+        fig_bot = px.bar(bot_df, y='国家', x='单价', orientation='h', color='单价', color_continuous_scale='Teal')
+        fig_bot.update_layout(yaxis={'categoryorder':'total descending'}) 
         st.plotly_chart(fig_bot, use_container_width=True)
 
-    # --- 3. 价格箱线图 ---
-    st.subheader("3. 重点国家价格弹性 (Box Plot)")
-    top_vol_countries = df.groupby('贸易伙伴名称')['第二数量'].sum().nlargest(15).index
-    df_box = df[df['贸易伙伴名称'].isin(top_vol_countries)]
+    # --- 4. 价格箱线图 (已加回!) ---
+    st.subheader("4. 重点国家价格弹性 (Box Plot)")
+    st.caption("箱子越长，代表该国价格波动越大（既有便宜也有贵），溢价机会通常也越大。")
+    # 选取销量前20的国家进行分析
+    top_countries = df.groupby('国家')['销量(吨)'].sum().nlargest(20).index
+    df_box = df[df['国家'].isin(top_countries)]
     
-    # 按照中位数价格排序
-    sorted_idx = df_box.groupby('贸易伙伴名称')['单价/每吨'].median().sort_values(ascending=False).index
+    # 按中位价排序
+    sorted_idx = df_box.groupby('国家')['单价'].median().sort_values(ascending=False).index
     
-    fig_box = px.box(df_box, x='贸易伙伴名称', y='单价/每吨', color='贸易伙伴名称', 
-                     category_orders={'贸易伙伴名称': sorted_idx})
+    fig_box = px.box(df_box, x='国家', y='单价', color='国家', category_orders={'国家': sorted_idx})
     fig_box.update_layout(showlegend=False)
     st.plotly_chart(fig_box, use_container_width=True)
 
-    # --- 4. 数据下载 (补回功能) ---
+    # --- 5. 数据下载 (已加回!) ---
     st.divider()
-    with st.expander("📥 下载分析结果"):
+    with st.expander("📥 下载详细分析数据"):
         st.dataframe(country_stats)
         st.download_button(
-            label="下载CSV (含市场分级标签)",
+            label="下载 CSV (含市场分级标签)",
             data=country_stats.to_csv(index=False).encode('utf-8-sig'),
-            file_name=f'{file_label}_analysis.csv',
+            file_name=f'{uploaded_file.name}_analysis.csv',
             mime='text/csv'
         )
 
 else:
-    # --- 欢迎页面 ---
     st.markdown("""
-    <div style='text-align: center; padding: 50px;'>
-        <h1>👋 通用定价分析看板</h1>
-        <p style='font-size: 1.2em; color: grey;'>
-            <b>一站式分析工具</b><br>
-            请在左侧上传不锈钢、碳钢或任意出口数据文件 (CSV/Excel)。
-        </p>
+    <div style='text-align: center; padding: 80px;'>
+        <h1>👋 欢迎使用定价决策看板 v7.0 (Final)</h1>
+        <p>支持多品类数据分析 | 自动识别红海蓝海 | 辅助销售决策</p>
+        <p style='color: gray; font-size: 0.9em;'>请在左侧上传 CSV 或 Excel 文件</p>
     </div>
     """, unsafe_allow_html=True)
