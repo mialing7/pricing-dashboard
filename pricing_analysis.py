@@ -260,9 +260,8 @@ if uploaded_file:
         fig_top = px.bar(
             top_df, y='国家', x='单价', orientation='h', 
             text_auto='.0f', 
-            # 恢复颜色过渡，但使用【绿色系】来对应“蓝海”
             color='单价', 
-            color_continuous_scale='Greens', # 绿色渐变
+            color_continuous_scale='Blues', # 蓝色渐变
             hover_data={'单价':':.0f', '销量(吨)':':.1f', '总销售额':':,.0f'}
         )
         fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="单价 (元/吨)")
