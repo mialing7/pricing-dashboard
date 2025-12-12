@@ -5,12 +5,11 @@ import plotly.express as px
 # --- 页面全局设置 ---
 st.set_page_config(page_title="富利华全球定价决策看板-by军政媳妇", layout="wide", page_icon="📊")
 
-# --- 统一配色方案 (专业商务版) ---
-# 红色=低价/风险, 绿色=高价/机会, 蓝色=主流/中性
+# --- 统一配色方案 (用于散点图和饼图) ---
 COLOR_MAP = {
-    '低价红海': '#EF553B', 
-    '高价蓝海': '#00CC96', 
-    '主流市场': '#636EFA'
+    '低价红海': '#EF553B',  # 红
+    '高价蓝海': '#00CC96',  # 绿
+    '主流市场': '#636EFA'   # 蓝
 }
 
 # ==========================================
@@ -60,12 +59,11 @@ def load_and_process(file):
     for c in ['单价', '销量(吨)']:
         df[c] = pd.to_numeric(df[c], errors='coerce')
     
-    # F. 基础过滤 (去除空值和0值)
+    # F. 基础过滤
     df = df.dropna(subset=['单价', '销量(吨)'])
     df = df[df['单价'] > 0] 
     
-    # [核心计算] 总销售额 = 单价(元) * 销量(吨)
-    # 结果单位：元 (CNY)
+    # [核心计算] 总销售额
     df['总销售额'] = df['单价'] * df['销量(吨)']
     
     return df, None
@@ -83,7 +81,7 @@ if uploaded_file:
     st.sidebar.divider()
     st.sidebar.subheader("2. 高级过滤器")
 
-    # [筛选1] 极值剔除 (IQR算法)
+    # [筛选1] 极值剔除
     use_iqr = st.sidebar.checkbox("剔除价格异常值 (IQR)", value=True, help="自动剔除价格过高或过低的极端订单。")
     if use_iqr:
         Q1 = df['单价'].quantile(0.25)
@@ -91,19 +89,15 @@ if uploaded_file:
         IQR = Q3 - Q1
         df = df[(df['单价'] >= Q1 - 1.5*IQR) & (df['单价'] <= Q3 + 1.5*IQR)]
 
-    # [筛选2] 销售额门槛筛选 (单位：元)
-    # 先计算每个国家的总销售额
+    # [筛选2] 销售额门槛筛选
     country_sales_sum = df.groupby('国家')['总销售额'].sum()
-    
     min_sales_threshold = st.sidebar.number_input(
         "最小销售额过滤 (单位: 元)", 
         min_value=0, 
         value=10000, 
         step=5000,
-        help="【重要】剔除总生意额低于此数值的国家。例如输入 10000，则把所有订单加起来不到 1万元 的国家筛掉。"
+        help="剔除总生意额低于此数值的国家。"
     )
-    
-    # 执行筛选
     valid_countries = country_sales_sum[country_sales_sum >= min_sales_threshold].index
     df = df[df['国家'].isin(valid_countries)]
 
@@ -155,7 +149,7 @@ if uploaded_file:
     avg_price_weighted = total_rev / total_vol if total_vol > 0 else 0
 
     # ==========================================
-    # 3. 三大独立统计面板 (单位已再次确认)
+    # 3. 三大独立统计面板
     # ==========================================
     st.subheader("1. 核心统计概览")
     
@@ -163,7 +157,7 @@ if uploaded_file:
         st.warning("当前筛选后无数据，请调整左侧筛选条件。")
         st.stop()
 
-    # --- 面板 1: 价格统计 (Price) ---
+    # --- 面板 1: 价格统计 ---
     with st.container():
         st.markdown("##### 1. 价格统计 (Price)")
         c1, c2, c3 = st.columns(3)
@@ -178,7 +172,7 @@ if uploaded_file:
 
     st.divider()
 
-    # --- 面板 2: 销量统计 (Volume) ---
+    # --- 面板 2: 销量统计 ---
     with st.container():
         st.markdown("##### 2. 销量统计 (Volume)")
         v1, v2, v3 = st.columns(3)
@@ -196,8 +190,7 @@ if uploaded_file:
 
     st.divider()
 
-    # --- 面板 3: 业绩统计 (Revenue) ---
-    # 注：此处为了显示简洁，除以 10000 转换为“万元”
+    # --- 面板 3: 业绩统计 ---
     with st.container():
         st.markdown("##### 3. 业绩统计 (Revenue)")
         r1, r2, r3 = st.columns(3)
@@ -219,7 +212,7 @@ if uploaded_file:
     # 4. 图表分析区
     # ==========================================
     
-    # --- Chart 1: 全球定价矩阵 (独占一行) ---
+    # --- Chart 1: 全球定价矩阵 ---
     st.subheader("2. 全球定价矩阵 (Price-Volume Matrix)")
     st.caption("横轴：单价(元/吨) | 纵轴：销量(吨) | 气泡大小：总销售额")
     
@@ -228,24 +221,21 @@ if uploaded_file:
         x='单价', y='销量(吨)',
         size='总销售额',
         color='市场类型',
-        color_discrete_map=COLOR_MAP,
+        color_discrete_map=COLOR_MAP, # 保持红/绿/蓝
         hover_name='国家',
         log_y=True, 
         text='国家',
         height=600,
-        # 悬停数据显示完整金额(元)
         hover_data={'单价':':.0f', '销量(吨)':':.1f', '总销售额':':,.0f'}
     )
-    # 辅助线
     fig_matrix.add_vline(x=df['单价'].median(), line_dash="dash", line_color="gray", annotation_text="中位价")
     fig_matrix.add_hline(y=df['销量(吨)'].median(), line_dash="dash", line_color="gray", annotation_text="中位量")
     fig_matrix.update_traces(textposition='top center')
-    # 轴标签加上单位
     fig_matrix.update_layout(xaxis_title="单价 (元/吨)", yaxis_title="销量 (吨, 对数坐标)")
     
     st.plotly_chart(fig_matrix, use_container_width=True)
         
-    # --- Chart 2: 市场销量份额 (单独一行) ---
+    # --- Chart 2: 市场销量份额 ---
     st.subheader("3. 市场销量份额 (Volume Share)")
     pie_data = country_stats.groupby('市场类型')['销量(吨)'].sum().reset_index()
     fig_pie = px.pie(
@@ -270,32 +260,34 @@ if uploaded_file:
         fig_top = px.bar(
             top_df, y='国家', x='单价', orientation='h', 
             text_auto='.0f', 
-            color='市场类型', 
-            color_discrete_map=COLOR_MAP,
+            # 恢复颜色过渡，但使用【绿色系】来对应“蓝海”
+            color='单价', 
+            color_continuous_scale='Greens', # 绿色渐变
             hover_data={'单价':':.0f', '销量(吨)':':.1f', '总销售额':':,.0f'}
         )
         fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="单价 (元/吨)")
-        fig_top.update_layout(showlegend=False)
+        fig_top.update_layout(coloraxis_showscale=False) # 隐藏颜色条，更简洁
         st.plotly_chart(fig_top, use_container_width=True)
         
     with rank_c2:
         st.markdown("##### 低价红海 Top 10")
         st.caption("平均单价最低的国家 (单价越低，位置越靠下)")
         
-        # 筛选出单价最低的10个 (按价格升序排)
+        # 筛选出单价最低的10个
         bot_df = country_stats.sort_values('单价', ascending=True).head(10)
         
         fig_bot = px.bar(
             bot_df, y='国家', x='单价', orientation='h', 
             text_auto='.0f', 
-            color_discrete_sequence=['#EF553B'], # 强制红色
+            # 恢复颜色过渡，但使用【红色系】来对应“红海”
+            color='单价', 
+            color_continuous_scale='Reds', # 红色渐变
             hover_data={'单价':':.0f', '销量(吨)':':.1f', '总销售额':':,.0f'}
         )
         
-        # [逻辑确认] total ascending
-        # 数值(单价)越小，条形越短/位置越低。
-        # 所以“最便宜的”国家会在图表的【最下面】。
+        # 保持最便宜的在最下面
         fig_bot.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="单价 (元/吨)")
+        fig_bot.update_layout(coloraxis_showscale=False) # 隐藏颜色条
         st.plotly_chart(fig_bot, use_container_width=True)
 
     # --- Chart 4: 箱线图 ---
@@ -327,10 +319,9 @@ if uploaded_file:
         )
 
 else:
-    # 欢迎页 (纯净版)
     st.markdown("""
     <div style='text-align: center; padding: 100px;'>
-        <h1>欢迎使用富利华全球定价决策看板-by军政媳妇</h1>
+        <h1>欢迎使用全球定价决策看板-by军政媳妇</h1>
         <p style='font-size: 1.2em; color: grey;'>
             三维统计面板 | 深度图表分析 | 完整数据报表
         </p>
