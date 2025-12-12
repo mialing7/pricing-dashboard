@@ -111,7 +111,7 @@ if uploaded_file:
     # 2. 顶部：标题与业务解释
     # ==========================================
     file_name = uploaded_file.name.split('.')[0]
-    st.title(f"{file_name} - 全球定价决策分析")
+    st.title(f"{file_name} - 富利华全球定价决策分析-by军政媳妇")
     
     with st.expander("分析指南：名词解释与判断依据 (点击展开)", expanded=True):
         st.markdown("""
